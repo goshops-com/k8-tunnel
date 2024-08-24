@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-tunnel-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-tunnel-client
+  template:
+    metadata:
+      labels:
+        app: k8s-tunnel-client
+    spec:
+      serviceAccountName: k8s-tunnel-client
+      containers:
+        - name: k8s-tunnel-client
+          image: your-registry/k8s-tunnel-client:latest
+          env:
+            - name: TUNNEL_SERVER_ADDRESS
+              value: "your-tunnel-server-address:3000"
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
