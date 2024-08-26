@@ -1,7 +1,42 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-tunnel-client
+  namespace: default
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-tunnel-client
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-tunnel-client
+subjects:
+  - kind: ServiceAccount
+    name: k8s-tunnel-client
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: k8s-tunnel-client
+  apiGroup: rbac.authorization.k8s.io
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: k8s-tunnel-client
+  namespace: default
+  labels:
+    app: k8s-tunnel-client
 spec:
   replicas: 1
   selector:
@@ -15,11 +50,19 @@ spec:
       serviceAccountName: k8s-tunnel-client
       containers:
         - name: k8s-tunnel-client
-          image: your-registry/k8s-tunnel-client:latest
+          image: goshops/k8-tunnel:latest
+          imagePullPolicy: Always
           env:
             - name: TUNNEL_SERVER_ADDRESS
-              value: "your-tunnel-server-address:3000"
+              value: "dev.goshops.com:3000" # Replace with your actual server address
             - name: KUBERNETES_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

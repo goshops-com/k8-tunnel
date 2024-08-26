@@ -7,8 +7,8 @@
     "ngrok-like-client": "./client.js"
   },
   "dependencies": {
-    "ws": "^8.5.0",
-    "commander": "^8.3.0"
+    "commander": "^8.3.0",
+    "ws": "^8.18.0"
   },
   "scripts": {
     "start": "node client.js"

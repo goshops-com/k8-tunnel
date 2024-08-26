@@ -6,6 +6,6 @@ COPY package*.json ./
 
 RUN npm install
 
-COPY k8s-tunnel-client.js .
+COPY client.js .
 
-CMD ["node", "k8s-tunnel-client.js"]
+CMD ["node", "client.js"]

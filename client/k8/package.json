@@ -5,7 +5,8 @@
     "main": "k8s-tunnel-client.js",
     "dependencies": {
         "@kubernetes/client-node": "^0.14.3",
-        "ws": "^8.5.0"
+        "ws": "^8.5.0",
+        "zlib": "^1.0.5"
     },
     "scripts": {
         "start": "node k8s-tunnel-client.js"

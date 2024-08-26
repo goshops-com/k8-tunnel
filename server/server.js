@@ -1,18 +1,22 @@
 const http = require('http');
-const httpProxy = require('http-proxy');
+const WebSocket = require('ws');
 const url = require('url');
 const fs = require('fs').promises;
 const path = require('path');
+const zlib = require('zlib');
 
-const proxy = httpProxy.createProxyServer();
 const clients = new Map();
+const registrationQueue = new Map();
 const storageFile = path.join(__dirname, 'client_storage.json');
 
 async function loadClients() {
     try {
         const data = await fs.readFile(storageFile, 'utf8');
         const storedClients = JSON.parse(data);
-        storedClients.forEach(([subdomain, target]) => clients.set(subdomain, target));
+        storedClients.forEach(([subdomain, target]) => {
+            clients.set(subdomain, { target });
+            registrationQueue.set(subdomain, target);
+        });
         console.log('Loaded clients from storage');
     } catch (error) {
         if (error.code !== 'ENOENT') {
@@ -23,7 +27,7 @@ async function loadClients() {
 
 async function saveClients() {
     try {
-        const data = JSON.stringify(Array.from(clients));
+        const data = JSON.stringify(Array.from(registrationQueue));
         await fs.writeFile(storageFile, data, 'utf8');
         console.log('Saved clients to storage');
     } catch (error) {
@@ -32,26 +36,95 @@ async function saveClients() {
 }
 
 const server = http.createServer((req, res) => {
+    // console.log('-------- New Request --------');
+    // console.log(`Received request: ${req.method} ${req.url}`);
+    // console.log(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
+
+    const parsedUrl = url.parse(req.url, true);
     const hostname = req.headers.host;
+    // console.log(`Hostname: ${hostname}`);
+
     const subdomain = hostname.split('.')[0];
+    // console.log(`Extracted subdomain: ${subdomain}`);
+
+    // console.log(`Registered clients: ${Array.from(clients.keys()).join(', ')}`);
+    // console.log(`Registration queue: ${Array.from(registrationQueue.keys()).join(', ')}`);
+
+    if (parsedUrl.pathname === '/_map') {
+        console.log('Handling /_map request');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(Array.from(registrationQueue), null, 2));
+        return;
+    }
 
     if (clients.has(subdomain)) {
-        const target = clients.get(subdomain);
-        proxy.web(req, res, { target });
+        // console.log(`Found client for subdomain: ${subdomain}`);
+        const clientInfo = clients.get(subdomain);
+        if (clientInfo.ws && clientInfo.ws.readyState === WebSocket.OPEN) {
+            // console.log('WebSocket connection is open, forwarding request');
+            let body = [];
+            req.on('data', (chunk) => {
+                body.push(chunk);
+            }).on('end', () => {
+                body = Buffer.concat(body).toString();
+                const requestData = {
+                    method: req.method,
+                    path: req.url,
+                    headers: req.headers,
+                    body: body
+                };
+                // console.log(`Sending request to client: ${JSON.stringify(requestData)}`);
+                clientInfo.ws.send(JSON.stringify({ type: 'request', data: requestData }));
+            });
+
+            let responseBuffer = Buffer.from([]);
+            clientInfo.ws.on('message', (message) => {
+                // console.log('Received response chunk from client');
+                const chunk = JSON.parse(message);
+                if (chunk.type === 'response_start') {
+                    // console.log(`Starting response with status: ${chunk.statusCode}`);
+                    res.writeHead(chunk.statusCode, chunk.headers);
+                } else if (chunk.type === 'response_chunk') {
+                    // console.log(`Received response chunk of size: ${chunk.data.length}`);
+                    responseBuffer = Buffer.concat([responseBuffer, Buffer.from(chunk.data, 'base64')]);
+                } else if (chunk.type === 'response_end') {
+                    // console.log('Response ended, processing final data');
+                    if (chunk.headers['content-encoding'] === 'br') {
+                        zlib.brotliDecompress(responseBuffer, (err, decoded) => {
+                            if (err) {
+                                console.error('Error decompressing brotli data:', err);
+                                res.end();
+                            } else {
+                                res.end(decoded);
+                            }
+                        });
+                    } else {
+                        res.end(responseBuffer);
+                    }
+                }
+            });
+        } else {
+            console.log('WebSocket connection is not open');
+            res.writeHead(502, { 'Content-Type': 'text/plain' });
+            res.end('Client not connected');
+        }
     } else {
+        console.log(`No client found for subdomain: ${subdomain}`);
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Subdomain not found');
     }
 });
 
-const registerClient = async (subdomain, target) => {
-    clients.set(subdomain, target);
+const registerClient = async (subdomain, target, ws) => {
+    clients.set(subdomain, { target, ws });
+    registrationQueue.set(subdomain, target);
     console.log(`Registered client: ${subdomain} -> ${target}`);
     await saveClients();
 };
 
 const unregisterClient = async (subdomain) => {
     clients.delete(subdomain);
+    registrationQueue.delete(subdomain);
     console.log(`Unregistered client: ${subdomain}`);
     await saveClients();
 };
@@ -64,7 +137,6 @@ loadClients().then(() => {
 });
 
 // WebSocket server for client registration
-const WebSocket = require('ws');
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
@@ -74,7 +146,7 @@ wss.on('connection', (ws) => {
         const data = JSON.parse(message);
         if (data.type === 'register') {
             clientSubdomain = data.subdomain;
-            await registerClient(data.subdomain, data.target);
+            await registerClient(data.subdomain, data.target, ws);
         }
     });
 
@@ -84,3 +156,5 @@ wss.on('connection', (ws) => {
         }
     });
 });
+
+console.log('Server started');
